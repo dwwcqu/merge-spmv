@@ -49,7 +49,8 @@ COMMA = ,
 ifdef sm
 	SM_ARCH = $(subst $(COMMA),-,$(sm))
 else 
-    SM_ARCH = 350
+    # the default SM Arch is sm_85
+    SM_ARCH = 850
 endif
 
 ifeq (520, $(findstring 520, $(SM_ARCH)))
@@ -91,7 +92,7 @@ endif
 OSUPPER = $(shell uname -s 2>/dev/null | tr [:lower:] [:upper:])
 
 # Default flags: verbose kernel properties (regs, smem, cmem, etc.); runtimes for compilation phases 
-NVCCFLAGS += $(SM_DEF) -Xptxas -v -Xcudafe -\# 
+NVCCFLAGS += -w $(SM_DEF) -Xptxas -v -Xcudafe -\# 
 
 ifeq (WIN_NT, $(findstring WIN_NT, $(OSUPPER)))
     # For MSVC

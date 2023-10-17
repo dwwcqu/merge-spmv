@@ -114,20 +114,24 @@ float TestCusparseHybmv(
     CpuTimer cpu_timer;
     cpu_timer.Start();
 
-    // Construct Hyb matrix
-    cusparseMatDescr_t mat_desc;
-    cusparseHybMat_t hyb_desc;
-    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseCreateMatDescr(&mat_desc));
-    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseCreateHybMat(&hyb_desc));
-    cusparseStatus_t status = cusparseScsr2hyb(
-        cusparse,
-        params.num_rows, params.num_cols,
-        mat_desc,
-        params.d_values, params.d_row_end_offsets, params.d_column_indices,
-        hyb_desc,
-        0,
-        CUSPARSE_HYB_PARTITION_AUTO);
-    AssertEquals(CUSPARSE_STATUS_SUCCESS, status);
+    cusparseSpMatDescr_t    spMat;
+    cusparseDnVecDescr_t    vecX, vecY;
+    void                    *dBuffer = NULL;
+    size_t                  bufferSize = 0;
+    // Create sparse matrix in CSR format
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseCreateCsr(
+        &spMat, params.num_rows, params.num_cols, params.num_nonzeros, 
+        params.d_row_end_offsets, params.d_column_indices, params.d_values, 
+        CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F));
+    // Create dense vector X
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseCreateDnVec(&vecX, params.num_cols, params.d_vector_x, CUDA_R_32F));
+    // Create dense vector Y
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseCreateDnVec(&vecY, params.num_rows, params.d_vector_y, CUDA_R_32F));
+    // allocate an external buffer if needed
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseSpMV_bufferSize(
+        cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE, &params.alpha, spMat, vecX,
+        &params.beta, vecY, CUDA_R_32F, CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize));
+    CubDebugExit(cudaMalloc(&dBuffer, bufferSize));
 
     cudaDeviceSynchronize();
     cpu_timer.Stop();
@@ -136,13 +140,10 @@ float TestCusparseHybmv(
     // Reset input/output vector y
     CubDebugExit(cudaMemcpy(params.d_vector_y, vector_y_in, sizeof(float) * params.num_rows, cudaMemcpyHostToDevice));
 
-    // Warmup
-    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseShybmv(
-        cusparse,
-        CUSPARSE_OPERATION_NON_TRANSPOSE,
-        &params.alpha, mat_desc,
-        hyb_desc,
-        params.d_vector_x, &params.beta, params.d_vector_y));
+    // Execute SpMV
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseSpMV(
+        cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE, &params.alpha, spMat, 
+        vecX, &params.beta, vecY, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, dBuffer));
 
     if (!g_quiet)
     {
@@ -157,19 +158,18 @@ float TestCusparseHybmv(
     timer.Start();
     for(int it = 0; it < timing_iterations; ++it)
     {
-        AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseShybmv(
-            cusparse,
-            CUSPARSE_OPERATION_NON_TRANSPOSE,
-            &params.alpha, mat_desc,
-            hyb_desc,
-            params.d_vector_x, &params.beta, params.d_vector_y));
+        AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseSpMV(
+            cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE, &params.alpha, spMat, 
+            vecX, &params.beta, vecY, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, dBuffer));
     }
     timer.Stop();
     elapsed_ms += timer.ElapsedMillis();
 
-    // Cleanup
-    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDestroyHybMat(hyb_desc));
-    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDestroyMatDescr(mat_desc));
+    // destroy matrix/vector descriptor
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDestroySpMat(spMat));
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDestroyDnVec(vecX));
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDestroyDnVec(vecY));
+    CubDebugExit(cudaFree(dBuffer));
 
     return elapsed_ms / timing_iterations;
 }
@@ -191,19 +191,24 @@ float TestCusparseHybmv(
     CpuTimer cpu_timer;
     cpu_timer.Start();
 
-    // Construct Hyb matrix
-    cusparseMatDescr_t mat_desc;
-    cusparseHybMat_t hyb_desc;
-    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseCreateMatDescr(&mat_desc));
-    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseCreateHybMat(&hyb_desc));
-    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDcsr2hyb(
-        cusparse,
-        params.num_rows, params.num_cols,
-        mat_desc,
-        params.d_values, params.d_row_end_offsets, params.d_column_indices,
-        hyb_desc,
-        0,
-        CUSPARSE_HYB_PARTITION_AUTO));
+    cusparseSpMatDescr_t    spMat;
+    cusparseDnVecDescr_t    vecX, vecY;
+    void                    *dBuffer = NULL;
+    size_t                  bufferSize = 0;
+    // Create sparse matrix in CSR format
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseCreateCsr(
+        &spMat, params.num_rows, params.num_cols, params.num_nonzeros, 
+        params.d_row_end_offsets, params.d_column_indices, params.d_values, 
+        CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F));
+    // Create dense vector X
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseCreateDnVec(&vecX, params.num_cols, params.d_vector_x, CUDA_R_64F));
+    // Create dense vector Y
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseCreateDnVec(&vecY, params.num_rows, params.d_vector_y, CUDA_R_64F));
+    // allocate an external buffer if needed
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseSpMV_bufferSize(
+        cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE, &params.alpha, spMat, vecX,
+        &params.beta, vecY, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize));
+    CubDebugExit(cudaMalloc(&dBuffer, bufferSize));
 
     cudaDeviceSynchronize();
     cpu_timer.Stop();
@@ -212,13 +217,10 @@ float TestCusparseHybmv(
     // Reset input/output vector y
     CubDebugExit(cudaMemcpy(params.d_vector_y, vector_y_in, sizeof(float) * params.num_rows, cudaMemcpyHostToDevice));
 
-    // Warmup
-    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDhybmv(
-        cusparse,
-        CUSPARSE_OPERATION_NON_TRANSPOSE,
-        &params.alpha, mat_desc,
-        hyb_desc,
-        params.d_vector_x, &params.beta, params.d_vector_y));
+    // Warmup Execute SpMV
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseSpMV(
+        cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE, &params.alpha, spMat, 
+        vecX, &params.beta, vecY, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, dBuffer));
 
     if (!g_quiet)
     {
@@ -233,19 +235,18 @@ float TestCusparseHybmv(
     timer.Start();
     for(int it = 0; it < timing_iterations; ++it)
     {
-        AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDhybmv(
-            cusparse,
-            CUSPARSE_OPERATION_NON_TRANSPOSE,
-            &params.alpha, mat_desc,
-            hyb_desc,
-            params.d_vector_x, &params.beta, params.d_vector_y));
+        AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseSpMV(
+            cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE, &params.alpha, spMat, 
+            vecX, &params.beta, vecY, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, dBuffer));
     }
     timer.Stop();
     elapsed_ms += timer.ElapsedMillis();
 
     // Cleanup
-    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDestroyHybMat(hyb_desc));
-    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDestroyMatDescr(mat_desc));
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDestroySpMat(spMat));
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDestroyDnVec(vecX));
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDestroyDnVec(vecY));
+    CubDebugExit(cudaFree(dBuffer));
 
     return elapsed_ms / timing_iterations;
 }
@@ -271,19 +272,32 @@ float TestCusparseCsrmv(
 {
     setup_ms = 0.0;
 
-    cusparseMatDescr_t desc;
-    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseCreateMatDescr(&desc));
-
     // Reset input/output vector y
     CubDebugExit(cudaMemcpy(params.d_vector_y, vector_y_in, sizeof(float) * params.num_rows, cudaMemcpyHostToDevice));
 
-    // Warmup
-    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseScsrmv(
-        cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE,
-        params.num_rows, params.num_cols, params.num_nonzeros, &params.alpha, desc,
-        params.d_values, params.d_row_end_offsets, params.d_column_indices,
-        params.d_vector_x, &params.beta, params.d_vector_y));
-
+    cusparseSpMatDescr_t    spMat;
+    cusparseDnVecDescr_t    vecX, vecY;
+    void                    *dBuffer = NULL;
+    size_t                  bufferSize = 0;
+    // Create sparse matrix in CSR format
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseCreateCsr(
+        &spMat, params.num_rows, params.num_cols, params.num_nonzeros, 
+        params.d_row_end_offsets, params.d_column_indices, params.d_values, 
+        CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F));
+    // Create dense vector X
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseCreateDnVec(&vecX, params.num_cols, params.d_vector_x, CUDA_R_32F));
+    // Create dense vector Y
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseCreateDnVec(&vecY, params.num_rows, params.d_vector_y, CUDA_R_32F));
+    // allocate an external buffer if needed
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseSpMV_bufferSize(
+        cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE, &params.alpha, spMat, vecX,
+        &params.beta, vecY, CUDA_R_32F, CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize));
+    CubDebugExit(cudaMalloc(&dBuffer, bufferSize));
+    // Execute SpMV
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseSpMV(
+        cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE, &params.alpha, spMat, 
+        vecX, &params.beta, vecY, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, dBuffer));
+    
     if (!g_quiet)
     {
         int compare = CompareDeviceResults(reference_vector_y_out, params.d_vector_y, params.num_rows, true, g_verbose);
@@ -297,16 +311,17 @@ float TestCusparseCsrmv(
     timer.Start();
     for(int it = 0; it < timing_iterations; ++it)
     {
-        AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseScsrmv(
-            cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE,
-            params.num_rows, params.num_cols, params.num_nonzeros, &params.alpha, desc,
-            params.d_values, params.d_row_end_offsets, params.d_column_indices,
-            params.d_vector_x, &params.beta, params.d_vector_y));
+        AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseSpMV(
+            cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE, &params.alpha, spMat, 
+            vecX, &params.beta, vecY, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, dBuffer));
     }
     timer.Stop();
     elapsed_ms += timer.ElapsedMillis();
-
-    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDestroyMatDescr(desc));
+    // destroy matrix/vector descriptor
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDestroySpMat(spMat));
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDestroyDnVec(vecX));
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDestroyDnVec(vecY));
+    CubDebugExit(cudaFree(dBuffer));
     return elapsed_ms / timing_iterations;
 }
 
@@ -324,19 +339,32 @@ float TestCusparseCsrmv(
     float                           &setup_ms,
     cusparseHandle_t                cusparse)
 {
-    cusparseMatDescr_t desc;
-    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseCreateMatDescr(&desc));
-
     // Reset input/output vector y
     CubDebugExit(cudaMemcpy(params.d_vector_y, vector_y_in, sizeof(float) * params.num_rows, cudaMemcpyHostToDevice));
 
-    // Warmup
-    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDcsrmv(
-        cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE,
-        params.num_rows, params.num_cols, params.num_nonzeros, &params.alpha, desc,
-        params.d_values, params.d_row_end_offsets, params.d_column_indices,
-        params.d_vector_x, &params.beta, params.d_vector_y));
-
+    cusparseSpMatDescr_t    spMat;
+    cusparseDnVecDescr_t    vecX, vecY;
+    void                    *dBuffer = NULL;
+    size_t                  bufferSize = 0;
+    // Create sparse matrix in CSR format
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseCreateCsr(
+        &spMat, params.num_rows, params.num_cols, params.num_nonzeros, 
+        params.d_row_end_offsets, params.d_column_indices, params.d_values, 
+        CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F));
+    // Create dense vector X
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseCreateDnVec(&vecX, params.num_cols, params.d_vector_x, CUDA_R_64F));
+    // Create dense vector Y
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseCreateDnVec(&vecY, params.num_rows, params.d_vector_y, CUDA_R_64F));
+    // allocate an external buffer if needed
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseSpMV_bufferSize(
+        cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE, &params.alpha, spMat, vecX,
+        &params.beta, vecY, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize));
+    CubDebugExit(cudaMalloc(&dBuffer, bufferSize));
+    // Execute SpMV
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseSpMV(
+        cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE, &params.alpha, spMat, 
+        vecX, &params.beta, vecY, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, dBuffer));
+    
     if (!g_quiet)
     {
         int compare = CompareDeviceResults(reference_vector_y_out, params.d_vector_y, params.num_rows, true, g_verbose);
@@ -349,17 +377,16 @@ float TestCusparseCsrmv(
     timer.Start();
     for(int it = 0; it < timing_iterations; ++it)
     {
-        AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDcsrmv(
-            cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE,
-            params.num_rows, params.num_cols, params.num_nonzeros, &params.alpha, desc,
-            params.d_values, params.d_row_end_offsets, params.d_column_indices,
-            params.d_vector_x, &params.beta, params.d_vector_y));
-
+        AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseSpMV(
+            cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE, &params.alpha, spMat, 
+            vecX, &params.beta, vecY, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, dBuffer));
     }
     timer.Stop();
     elapsed_ms += timer.ElapsedMillis();
-
-    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDestroyMatDescr(desc));
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDestroySpMat(spMat));
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDestroyDnVec(vecX));
+    AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDestroyDnVec(vecY));
+    CubDebugExit(cudaFree(dBuffer));
     return elapsed_ms / timing_iterations;
 }
 
